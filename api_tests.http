@@ -1,0 +1,7 @@
+POST http://localhost:5000/tasks
+Content-Type: application/json
+
+{
+   "title": "Learn Kubernetes",
+    "description": "Learn Pods, Deployments and Services"
+}
