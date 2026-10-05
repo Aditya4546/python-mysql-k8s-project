@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: task-python
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: task-python
+
+  template:
+
+    metadata:
+      labels:
+        app: task-python
+
+    spec:
+
+      containers:
+
+        - name: task-python
+
+          image: task-python-app:latest
+
+          # imagePullPolicy: Never
+
+          ports:
+            - containerPort: 5000
+
+          env:
+            - name: DB_HOST
+              value: mysql-service
+
+            - name: DB_PORT
+              value: "3306"
+
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: MYSQL_USER
+
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: MYSQL_PASSWORD
+
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: MYSQL_DATABASE
