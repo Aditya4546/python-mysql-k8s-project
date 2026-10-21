@@ -1,7 +1,61 @@
-from flask import Flask, request, jsonify
+import time
+
+from flask import Flask, request, jsonify, g, Response
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from database import get_connection
 
 app = Flask(__name__)
+
+# Total HTTP requests, grouped by method, route, and status code
+HTTP_REQUESTS_TOTAL = Counter(
+    "flask_http_requests_total",
+    "Total number of HTTP requests",
+    ["method", "route", "status"]
+)
+
+# Time taken to process HTTP requests, in seconds
+HTTP_REQUEST_DURATION_SECONDS = Histogram(
+    "flask_http_request_duration_seconds",
+    "HTTP request processing duration in seconds",
+    ["method", "route"]
+)
+
+@app.before_request
+def start_request_timer():
+    # Do not include Prometheus scraping requests in application metrics
+    if request.path == "/metrics":
+        return
+
+    g.request_start_time = time.perf_counter()
+
+
+@app.after_request
+def record_request_metrics(response):
+    # Avoid counting Prometheus's own scraping requests
+    if request.path == "/metrics":
+        return response
+
+    start_time = getattr(g, "request_start_time", None)
+
+    if start_time is not None:
+        route = request.url_rule.rule if request.url_rule else "unmatched"
+        method = request.method
+        status = str(response.status_code)
+
+        HTTP_REQUESTS_TOTAL.labels(
+            method=method,
+            route=route,
+            status=status
+        ).inc()
+
+        HTTP_REQUEST_DURATION_SECONDS.labels(
+            method=method,
+            route=route
+        ).observe(time.perf_counter() - start_time)
+
+    return response
+
+
 
 
 @app.route("/")
@@ -185,7 +239,12 @@ def delete_task(task_id):
     return jsonify({
         "message": "Task deleted"
     })
-
+@app.route("/metrics")
+def metrics():
+    return Response(
+        generate_latest(),
+        mimetype=CONTENT_TYPE_LATEST
+    )
 
 if __name__ == "__main__":
     app.run(

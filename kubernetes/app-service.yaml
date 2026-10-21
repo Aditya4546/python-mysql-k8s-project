@@ -3,6 +3,9 @@ kind: Service
 
 metadata:
   name: task-python-service
+  namespace: default
+  labels:
+    app: task-python
 
 spec:
   type: NodePort

@@ -1503,7 +1503,7 @@ If successful, you should not get an SQL error.
 
 Verify:
 
-kubectl exec -it mysql-pod-name -- mysql -uappuser -papp123 taskdb -e "SHOW TABLES;"
+kubectl exec -it mysql-pod-name -- mysql -uappuser -papp123 task  db -e "SHOW TABLES;"
 
 You should see:
 
@@ -1851,3 +1851,311 @@ same PVC
  ↓
 same data
 -----------------------------------------
+
+
+LAB 5 — Prometheus + Grafan
+
+
+
+Install Helm on Windows
+
+winget install -e --id Helm.Helm
+
+
+Verify the installation
+
+helm version
+
+Add the Prometheus Helm repository
+
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+
+Update repository information
+
+helm repo update
+
+Check the available chart 
+
+helm search repo prometheus-community/kube-prometheus-stack
+===================================================================
+
+Install Prometheus and Grafana
+
+helm upgrade monitoring prometheus-community/kube-prometheus-stack `
+  --version 92.10.1 `
+  --namespace monitoring `
+  --set grafana.persistence.enabled=false `
+  --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=2Gi `
+  --set prometheus.prometheusSpec.retention=2d `
+  --set alertmanager.enabled=false `
+  --wait `
+  --timeout 10m
+=====================================================================================
+
+
+Verify the installation
+
+kubectl get pods -n monitoring
+
+kubectl get services -n monitoring
+
+Check whether Prometheus has been created
+
+kubectl get prometheus -n monitoring
+
+kubectl get statefulsets -n monitoring
+
+
+============================================
+
+
+Open Grafana
+In PowerShell, run:
+kubectl port-forward svc/monitoring-grafana 3000:80 -n monitoring
+
+http://localhost:3000/
+
+To retrieve the generated password, open a second PowerShell window and run:
+
+$encoded = kubectl get secret monitoring-grafana -n monitoring -o jsonpath="{.data.admin-password}"
+[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($encoded))
+
+
+
+Verify Prometheus metrics
+kubectl port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090 -n monitoring
+
+http://localhost:9090/
+
+==========================================================
+
+
+Step 1: Add Prometheus metrics to app.py
+
+Replace your current first line:
+
+from flask import Flask, request, jsonify
+
+
+to 
+
+
+
+import time
+
+from flask import Flask, request, jsonify, g, Response
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+
+Immediately after this line:
+app = Flask(__name__)
+
+
+
+add:
+
+# Total HTTP requests, grouped by method, route, and status code
+HTTP_REQUESTS_TOTAL = Counter(
+    "flask_http_requests_total",
+    "Total number of HTTP requests",
+    ["method", "route", "status"]
+)
+
+# Time taken to process HTTP requests, in seconds
+HTTP_REQUEST_DURATION_SECONDS = Histogram(
+    "flask_http_request_duration_seconds",
+    "HTTP request processing duration in seconds",
+    ["method", "route"]
+)
+
+
+
+
+
+
+@app.before_request
+def start_request_timer():
+    # Do not include Prometheus scraping requests in application metrics
+    if request.path == "/metrics":
+        return
+
+    g.request_start_time = time.perf_counter()
+
+Record each request
+Below the metric definitions,
+
+add:
+
+
+
+@app.after_request
+def record_request_metrics(response):
+    # Avoid counting Prometheus's own scraping requests
+    if request.path == "/metrics":
+        return response
+
+    start_time = getattr(g, "request_start_time", None)
+
+    if start_time is not None:
+        route = request.url_rule.rule if request.url_rule else "unmatched"
+        method = request.method
+        status = str(response.status_code)
+
+        HTTP_REQUESTS_TOTAL.labels(
+            method=method,
+            route=route,
+            status=status
+        ).inc()
+
+        HTTP_REQUEST_DURATION_SECONDS.labels(
+            method=method,
+            route=route
+        ).observe(time.perf_counter() - start_time)
+
+    return response
+
+
+    Create the /metrics endpoint
+Add this route before your existing if __name__ == "__main__": block:
+
+
+
+
+: Update requirements.txt
+Add one new dependency to your existing file.
+
+flask
+mysql-connector-python
+python-dotenv
+prometheus-client
+
+
+
+=============================================
+
+Build the updated Docker image
+
+From your project folder, run:
+docker build -t task-python-app-prom-grafana:latest .
+
+
+
+----------------------------------------------
+
+Update the Kubernetes deployment
+
+Run these two commands in PowerShell:
+
+
+kubectl edit deployment task-python -n default
+
+
+In the editor, find the container's imagePullPolicy: Always and change it to imagePullPolicy: IfNotPresent. Save and close the editor.
+
+
+
+kubectl get deployment task-python -n default -o jsonpath="{.spec.template.spec.containers[0].imagePullPolicy}"
+
+
+Restart the Flask deployment
+Run:
+
+kubectl rollout restart deployment/task-python -n default
+
+kubectl get pods -n default
+=========================================================================
+
+Test the metrics endpoint
+
+kubectl port-forward service/task-python-service 5001:5000 -n default
+
+
+=====================================================
+
+Prepare the Kubernetes Service
+
+A ServiceMonitor needs a named Service port to scrape. Your Service currently exposes port 5000 without a name.
+
+Run:
+kubectl edit service task-python-service -n default
+
+
+In the editor, find this section:
+ports:
+- nodePort: 30050
+  port: 5000
+  protocol: TCP
+  targetPort: 5000
+
+
+Add name: http under the port entry so it looks like this:
+ports:
+- name: http
+  nodePort: 30050
+  port: 5000
+  protocol: TCP
+  targetPort: 5000
+
+  Then verify:
+kubectl get service task-python-service -n default
+
+===========================================================
+
+Create the ServiceMonitor
+We’ll configure it in the default namespace, selecting your existing Service by its app: task-python label. The release: monitoring label helps it match the Prometheus Operator’s Helm configuration.
+
+crete a file "task-python-servicemonitor.yaml"
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: task-python
+  namespace: default
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: task-python
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+
+
+run the cammand: 
+
+kubectl apply -f kubernetes\task-python-servicemonitor.yaml
+================================================================
+
+lets make a litte  bit changes in our app.service.yaml
+
+in file change the metsdata to :
+
+metadata:
+  name: task-python-service
+  namespace: default
+  labels:
+    app: task-python
+
+finally apply the files: 
+
+kubectl apply -f kubernetes\app-service.yaml
+kubectl apply -f kubernetes\task-python-servicemonitor.yaml
+
+==================================
+
+after that, 
+
+lets create a dashboard ,
+
+open grafana, on port 3000
+
+
+lets create a dashboard, 
+
+first panal : 
+
+up{namespace="default", service="task-python-service"}
+
+sum(rate(flask_http_request_total{namespace="default"}[5m]))
+
