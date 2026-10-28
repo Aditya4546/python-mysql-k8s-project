@@ -1881,16 +1881,18 @@ helm search repo prometheus-community/kube-prometheus-stack
 
 Install Prometheus and Grafana
 
-helm upgrade monitoring prometheus-community/kube-prometheus-stack `
-  --version 92.10.1 `
-  --namespace monitoring `
-  --set grafana.persistence.enabled=false `
-  --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=2Gi `
-  --set prometheus.prometheusSpec.retention=2d `
-  --set alertmanager.enabled=false `
-  --wait `
-  --timeout 10m
-=====================================================================================
+kubectl create namespace monitoring
+
+  helm upgrade --install monitoring prometheus-community/kube-prometheus-stack `
+    --version 92.10.1 `
+    --namespace monitoring `
+    --set grafana.persistence.enabled=false `
+    --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=2Gi `
+    --set prometheus.prometheusSpec.retention=2d `
+    --set alertmanager.enabled=false `
+    --wait `
+    --timeout 10m
+====================== ===============================================================
 
 
 Verify the installation
@@ -2038,6 +2040,15 @@ From your project folder, run:
 docker build -t task-python-app-prom-grafana:latest .
 
 
+change the image: 
+
+kubectl set image deployment/task-python task-python=task-python-app-prom-grafana:latest
+
+kubectl rollout status deployment/task-python
+
+
+kubectl get deployment task-python -n default -o jsonpath='{.spec.template.spec.containers[*].image}'
+
 
 ----------------------------------------------
 
@@ -2124,7 +2135,7 @@ spec:
 
 run the cammand: 
 
-kubectl apply -f kubernetes\task-python-servicemonitor.yaml
+kubectl apply -f kubernetes
 ================================================================
 
 lets make a litte  bit changes in our app.service.yaml
